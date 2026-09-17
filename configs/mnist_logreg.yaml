@@ -1,0 +1,16 @@
+# MNIST + Logistic Regression — baseline experiment
+_base_: default.yaml
+
+dataset:
+  name: mnist
+
+model:
+  arch: logreg
+
+training:
+  epochs: 10
+  batch_size: 256
+  learning_rate: 0.05
+  max_grad_norm: 1.0
+  noise_multiplier: 1.1
+  delta: 1.0e-5

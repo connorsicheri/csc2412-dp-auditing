@@ -1,0 +1,40 @@
+# ============================================================
+# 2026-03-27 — σ=1.0, LR schedule [1.0 → 2.0], B=250, 500 epochs
+# Testing if LR schedule + large batch can memorize at σ=1.0
+# ============================================================
+_base_: ../../default.yaml
+
+dataset:
+  name: cifar10
+  val_fraction: 0.0
+  subset_n: 1000
+
+model:
+  arch: wrn
+  wrn_depth: 16
+  wrn_widen: 4
+
+training:
+  epochs: 500
+  batch_size: 250
+  learning_rate: 1.0
+  max_grad_norm: 1.0
+  noise_multiplier: 1.0
+  delta: 1.0e-5
+  max_physical_batch_size: 16
+  optimizer: sgd_no_momentum
+  eval_every_n_epochs: 600
+  lr_schedule:
+    - [1, 1.0]
+    - [250, 2.0]
+
+auditing:
+  one_run:
+    num_canaries: 0
+    mislabel: true
+    include_base: false
+    abstention_threshold: 0.0
+    confidence_beta: 0.05
+
+evaluation:
+  output_dir: results/experiments/2026-03-27_lr_sweep/s1.0_lrsched_500ep

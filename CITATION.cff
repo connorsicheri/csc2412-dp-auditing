@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite this repository."
+title: "Theory vs. Empirics in DP-ML Auditing"
+type: software
+authors:
+  - family-names: Sicheri
+    given-names: Connor
+  - family-names: Tahami
+    given-names: Seyed Mani
+repository-code: "https://github.com/connorsicheri/csc2412-dp-auditing"
+version: 0.1.0
+date-released: 2026-09-16

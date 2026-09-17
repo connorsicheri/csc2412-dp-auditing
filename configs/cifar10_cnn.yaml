@@ -1,0 +1,22 @@
+# CIFAR-10 + Small CNN — harder experiment
+_base_: default.yaml
+
+dataset:
+  name: cifar10
+
+model:
+  arch: cnn
+  cnn_channels: [32, 64]
+
+training:
+  epochs: 20
+  batch_size: 512
+  learning_rate: 0.01
+  max_grad_norm: 1.0
+  noise_multiplier: 0.8
+  delta: 1.0e-5
+
+auditing:
+  one_run:
+    num_canaries: 1000
+    confidence_beta: 0.05

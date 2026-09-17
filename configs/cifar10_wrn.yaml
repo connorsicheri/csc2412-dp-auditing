@@ -1,0 +1,41 @@
+# CIFAR-10 + WideResNet WRN-16-4 — reproducing Steinke et al. (2023)
+#
+# Paper setup (§6):
+#   - CIFAR-10, n=50,000
+#   - WRN-16 (WideResNet-16-4, ~11M params)
+#   - m=5000 mislabeled canaries
+#   - DP-SGD with (ε=4, δ=1e-5)
+#   - Black-box: score = loss(w0) - loss(w_final)
+#   - 76% test accuracy at ε=8
+#
+# We target ε≈4 (theoretical) as a proof-of-concept.
+# Training hyperparameters follow Nasr et al. (2023) / De et al. (2022)
+# for CIFAR-10 with DP-SGD on WRN-16.
+_base_: default.yaml
+
+dataset:
+  name: cifar10
+  val_fraction: 0.0  # paper uses full training set, no val split
+
+model:
+  arch: wrn
+  wrn_depth: 16
+  wrn_widen: 4
+
+training:
+  epochs: 10
+  batch_size: 512
+  learning_rate: 0.001
+  max_grad_norm: 1.0
+  noise_multiplier: 0.7    # tune for target ε≈4 at δ=1e-5
+  delta: 1.0e-5
+  max_physical_batch_size: 32  # keep small — Opacus per-sample grads on WRN are heavy
+
+auditing:
+  one_run:
+    num_canaries: 5000       # paper uses m=5000
+    abstention_threshold: 0.0
+    confidence_beta: 0.05
+
+evaluation:
+  output_dir: results/cifar10_wrn

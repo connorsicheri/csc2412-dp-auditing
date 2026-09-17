@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dp-auditing"
+version = "0.1.0"
+description = "Theory vs Empirics in DP-ML Auditing (DP-SGD) — CSC2412 Project"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Core ML
+    "torch>=2.0",
+    "torchvision>=0.15",
+    # DP training
+    "opacus>=1.4",            # DP-SGD via Opacus
+    # Privacy accounting
+    "dp-accounting>=0.4",     # Google's DP accounting library (PLD/RDP)
+    # Scientific computing
+    "numpy>=1.24",
+    "scipy>=1.10",
+    # Data & config
+    "pyyaml>=6.0",
+    "pandas>=2.0",
+    # Plotting
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    # Progress
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "ipykernel>=6.0",
+    "jupyter>=1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

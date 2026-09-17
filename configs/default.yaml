@@ -1,0 +1,59 @@
+# Default configuration for DP-SGD auditing experiments
+# Override per-experiment in dataset-specific configs.
+
+seed: 42
+
+# --- Dataset ---
+dataset:
+  name: mnist            # mnist | cifar10
+  data_dir: ./data
+  val_fraction: 0.1
+
+# --- Model ---
+model:
+  arch: logreg           # logreg | mlp | cnn
+  # MLP-specific
+  mlp_hidden: [128]
+  # CNN-specific (small CNN for CIFAR-10)
+  cnn_channels: [32, 64]
+
+# --- DP-SGD Training ---
+training:
+  epochs: 10
+  batch_size: 256
+  learning_rate: 0.1
+  max_grad_norm: 1.0     # per-sample gradient clipping bound
+  noise_multiplier: 1.0  # σ for Gaussian noise
+  delta: 1.0e-5          # target δ for (ε,δ)-DP
+
+# --- Accounting ---
+accounting:
+  methods: [rdp, moments, zcdp, pld]
+  # RDP orders to evaluate
+  rdp_orders: [2, 3, 4, 5, 8, 16, 32, 64, 128, 256, 512, 1024]
+  delta: 1.0e-5
+
+# --- Auditing ---
+auditing:
+  # One-run canary auditing (Steinke et al. 2023)
+  one_run:
+    num_canaries: 500       # number of canary examples to insert
+    abstention_threshold: 0.0  # min |score| to make a guess (0 = no abstention)
+    confidence_beta: 0.05   # 1 - β confidence level for ε lower bound
+
+  # Worst-case initialization (Annamalai & De Cristofaro 2024)
+  worst_case_init:
+    num_trials: 10
+    init_search_steps: 50
+
+  # Poisoning-based (Jagielski et al. 2020)
+  poisoning:
+    num_poison_samples: 10
+    poison_strength: 1.0
+
+# --- Evaluation ---
+evaluation:
+  delta_grid_log_min: -7   # log10(δ) range for sweep
+  delta_grid_log_max: -3
+  delta_grid_points: 50
+  output_dir: ./results

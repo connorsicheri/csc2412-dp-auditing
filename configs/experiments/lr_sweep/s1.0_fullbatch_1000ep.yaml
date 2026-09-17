@@ -1,0 +1,36 @@
+# ============================================================
+# 2026-03-28 — σ=1.0, full batch (B=1000≥N), LR=1.0, 1000 epochs
+# ============================================================
+_base_: ../../default.yaml
+
+dataset:
+  name: cifar10
+  val_fraction: 0.0
+  subset_n: 1000
+
+model:
+  arch: wrn
+  wrn_depth: 16
+  wrn_widen: 4
+
+training:
+  epochs: 1000
+  batch_size: 1000
+  learning_rate: 1.0
+  max_grad_norm: 1.0
+  noise_multiplier: 1.0
+  delta: 1.0e-5
+  max_physical_batch_size: 16
+  optimizer: sgd_no_momentum
+  eval_every_n_epochs: 600
+
+auditing:
+  one_run:
+    num_canaries: 0
+    mislabel: true
+    include_base: false
+    abstention_threshold: 0.0
+    confidence_beta: 0.05
+
+evaluation:
+  output_dir: results/experiments/2026-03-28_s1.0_fullbatch_1000ep

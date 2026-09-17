@@ -1,0 +1,619 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\newcommand{\eps}{\varepsilon}
+\newcommand{\del}{\delta}
+\newcommand{\epsbar}{\bar\varepsilon}
+\newcommand{\Prb}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\RDP}{\mathrm{RDP}}
+\newcommand{\zCDP}{\mathrm{zCDP}}
+\newcommand{\TV}{\mathrm{TV}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\Bin}{\mathrm{Binomial}}
+\newcommand{\Bern}{\mathrm{Bernoulli}}
+
+\title{\textbf{Theory vs.\ Empirics in DP-ML Auditing:\\
+Accounting Upper Bounds and One-Run Audit Lower Bounds for DP-SGD}}
+\author{Seyed Mani Tahami \and Connor Sicheri}
+\date{CSC2412 --- Algorithms for Private Data Analysis}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Differentially private stochastic gradient descent (DP-SGD) is usually evaluated through privacy accounting methods that provide theoretical upper bounds on privacy loss. In contrast, privacy auditing seeks empirical lower bounds by constructing concrete distinguishers against trained models. In this project, we compare accounting upper bounds and one-run auditing lower bounds for DP-SGD under a black-box final-model access model. Empirically, in a controlled CIFAR-10 canary-auditing setting with fixed privacy-accounting parameters, we find that smaller models yield nonzero certified audit lower bounds while a larger wide residual network does not over the same finite training horizon, despite identical accounting guarantees. Theoretically, we formalize how one-run audit outcomes yield calibrated lower bounds on privacy loss in the usual $(\eps,\del)$ sense, and we show separately that any certified lower bound on binary distinguishing advantage can be converted into lower bounds for R\'enyi differential privacy (RDP) and zero-concentrated differential privacy (zCDP), two privacy formalisms commonly used in analyses of DP-SGD.
+\end{abstract}
+
+\section{Introduction}
+
+Differential privacy (DP) is a rigorous framework for controlling the privacy risk of individuals whose data are used in statistical analysis and machine learning. In modern machine learning, one of the most widely used private training methods is differentially private stochastic gradient descent (DP-SGD), where per-example gradients are clipped and noise is added during optimization. The privacy cost of DP-SGD is then tracked through privacy accountants, which provide worst-case upper bounds on quantities such as $\eps$.
+
+At the same time, these guarantees may be conservative in practice. This motivates privacy auditing, which attempts to empirically demonstrate privacy leakage by constructing concrete attacks, typically membership inference attacks, against trained models. In this report, we study the gap between these two viewpoints: theoretical privacy accounting and empirical privacy auditing. Our empirical focus is on one-run canary auditing under a black-box final-model access model, while our theoretical focus is on clarifying what the one-run audit certifies directly and how related audit evidence can be translated into divergence-based privacy notions.
+
+More concretely, the report addresses two questions. First, in a controlled black-box final-model setting on CIFAR-10, how large is the gap between a standard accounting upper bound $\eps_{\mathrm{account}}(\del)$ and a one-run auditing lower bound $\eps_{\mathrm{audit}}(\del,\beta)$ for the same DP-SGD mechanism? Second, when an audit certifies a lower bound on the advantage of a binary post-processing attack, what lower bounds on RDP and zCDP follow automatically from that evidence?
+
+Our contributions match these two questions. Empirically, we compare accounting and auditing while holding the privacy-accounting inputs fixed and tuning the learning rate for each model architecture. This lets us separate the privacy accountant from the model's ability to learn and memorize under noise. The main pattern we observe is specific to the black-box final-model interface studied here: under identical accounting parameters, smaller models produce detectable audit signal while a larger WRN-16-4 does not over the same finite training horizon. Theoretically, we show how to interpret audit evidence at two levels: the direct one-run calibration for $(\eps,\del)$-DP, and a separate exact conversion from certified binary advantage to lower bounds on RDP and zCDP.
+
+\section{Related Work}
+
+Differential privacy has become a central framework for protecting sensitive information in data analysis and machine learning. In modern machine learning, privacy guarantees are often obtained through DP-SGD, where per-example gradients are clipped and noise is added during training. The privacy cost of such algorithms is typically tracked through privacy accounting methods, which compose privacy loss across many optimization steps and report guarantees in forms such as $(\epsilon,\delta)$-DP, R\'enyi differential privacy (RDP), or zero-concentrated differential privacy (zCDP). This line of work includes the moments accountant for DP-SGD \cite{abadi2016deep}, the introduction of RDP as a compositional privacy formalism \cite{mironov2017renyi}, subsampled-RDP and analytical-moments-accountant analyses tailored to private stochastic optimization \cite{wang2019subsampled}, tighter numerical composition methods based on privacy loss distributions and FFT \cite{koskela2021tight}, and concentrated-privacy formalisms such as zCDP \cite{bun2016concentrated}. As a result, the theoretical analysis of private learning algorithms is now often expressed through privacy profiles rather than a single scalar guarantee.
+
+A complementary literature studies \emph{privacy auditing}, whose goal is not to certify an upper bound on privacy loss, but to empirically demonstrate leakage by exhibiting a concrete distinguisher. In machine learning, a common and influential empirical attack model is membership inference, in which an adversary attempts to determine whether a particular sample was used in training \cite{shokri2017membership}. This perspective is natural because DP itself is an indistinguishability condition on the output distributions produced by neighboring datasets. Accordingly, auditing work often interprets membership inference through the lens of hypothesis testing and evaluates attacks using quantities such as true positive rate, false positive rate, attacker advantage, ROC trade-offs, and total variation distance.
+
+Early auditing work for private machine learning often relied on repeated training runs on neighboring datasets. A representative example is \emph{Auditing Differentially Private Machine Learning: How Private Is Private SGD?}, which studies empirical lower bounds for DP-SGD via poisoning-based attacks and repeated retraining \cite{jagielski2020auditing}. Related work has also shown that auditing can serve as a debugging tool: \emph{Debugging Differential Privacy: A Case Study for Privacy Auditing} demonstrates that auditing can detect discrepancies between claimed and actual privacy guarantees in a purportedly private implementation \cite{tramer2022debugging}. These approaches are conceptually direct, but they can be computationally expensive because estimating small leakage may require many retraining runs.
+
+Later work improved both the scope and the statistical efficiency of auditing. \emph{A General Framework for Auditing Differentially Private Machine Learning} formulates auditing as the combination of searching for difficult neighboring datasets and designing statistically efficient verification procedures, yielding a broader methodology for empirical privacy evaluation across multiple model classes \cite{lu2022general}. In a related direction, \emph{Bayesian Estimation of Differential Privacy} argues that standard confidence-interval methods for converting empirical attack statistics into privacy estimates can be statistically inefficient, and proposes a Bayesian alternative with sharper uncertainty quantification \cite{zanella2023bayesian}.
+
+A particularly important development is the move from many-run auditing toward few-run and single-run auditing. \emph{Tight Auditing of Differentially Private Machine Learning} gives a substantially more efficient auditing procedure that yields tight empirical estimates for natural datasets under a stronger threat model in which the adversary can observe all model updates during training; notably, the procedure requires only two training runs rather than thousands \cite{nasr2023tight}. The prior work we replicate in empirical setting is \emph{Privacy Auditing with One (1) Training Run} \cite{steinke2023privacy}. Its key idea is to exploit parallelism within a single execution of the training algorithm by inserting many independently randomized canaries and then asking the auditor to guess whether each canary was included. Although these guesses are not independent, the analysis provides a statistically valid way to compare aggregate success against a binomial benchmark, yielding a lower bound on privacy loss from only one training run without naively paying full group-privacy costs.
+
+More broadly, the hypothesis-testing view of privacy has been developed explicitly in work on $f$-DP, including Gaussian differential privacy, which represents privacy guarantees through full type-I/type-II trade-off curves rather than a single scalar parameter \cite{dong2022gaussian}. This perspective is closely related to privacy auditing, since membership inference and canary-based attacks are binary tests for distinguishing neighboring datasets. By contrast, R\'enyi differential privacy (RDP) and zero-concentrated differential privacy (zCDP) are divergence-based relaxations that are especially useful for composition and privacy accounting \cite{mironov2017renyi,bun2016concentrated}. In our setting, these viewpoints meet naturally: auditing produces empirical evidence of binary distinguishability, while accounting expresses formal upper bounds through privacy profiles such as $(\eps,\delta)$-DP, RDP, and zCDP.
+
+Finally, the literature has repeatedly emphasized that auditing conclusions depend strongly on the threat model. Some papers study strong adversaries with access to intermediate training states or updates, while others focus on black-box settings in which only the final released model is available. Recent work also shows that substantially tighter auditing is possible in the black-box setting than earlier results suggested \cite{annamalai2024nearlytight}. For this reason, empirical lower bounds should not be interpreted as universal statements about a mechanism in isolation, but rather as statements about that mechanism under a specific interface and attack model \cite{nasr2023tight,annamalai2024nearlytight}.
+
+% Relative to this literature, our project occupies a narrow but well-defined niche. Empirically, we study the black-box final-model, one-run canary-auditing setting rather than stronger access models. Theoretically, we do not propose a new auditor; instead, we clarify the distinction between what the one-run hypothesis test certifies directly in $(\eps,\del)$ terms and what can be concluded separately from any certified lower bound on binary distinguishing advantage. This positioning is important for interpreting our results: the experimental lower bounds below are interface-specific, while the RDP/zCDP conversion is a conditional theoretical extension.
+
+\section{Problem Setup}
+
+We study privacy accounting and privacy auditing for models trained with differentially private stochastic gradient descent (DP-SGD). Let $M$ denote a randomized training procedure that maps a dataset $D$ to a final trained model
+\[
+\theta = M(D).
+\]
+We use the standard add/remove-one adjacency relation: two datasets $D$ and $D'$ are neighboring, written $D \simeq D'$, if one can be obtained from the other by adding or removing a single example.
+
+Our empirical setting is the black-box final-model auditing setting with dataset control and canary insertion. Concretely, the auditor may construct neighboring datasets, insert canaries, train DP-SGD on those datasets, and query only the final released model through its predictions or confidence scores. The auditor does not observe intermediate gradients, per-step parameter updates, minibatch contents, or other hidden training states. Accordingly, all empirical lower bounds in this report are specific to this black-box final-model interface and should not be interpreted as statements about stronger access models.
+
+Within this setting, the project addresses two linked problems. The first is empirical: for a fixed DP-SGD mechanism, how far apart are the accountant upper bound
+\[
+\eps_{\mathrm{account}}(\delta)
+\]
+and the certified one-run audit lower bound
+\[
+\eps_{\mathrm{audit}}(\delta,\beta)
+\]
+under the same access model? The second is theoretical: once an audit produces certified evidence of binary distinguishability between neighboring datasets, how can that evidence be translated into lower bounds not only for $(\eps,\delta)$-DP but also for the RDP and zCDP formalisms commonly used in privacy accounting?
+
+In our main experiments, we answer the empirical question in a concrete CIFAR-10 canary-auditing workload by holding the privacy-accounting parameters fixed, varying the model architecture, and tuning the learning rate for each architecture. This lets us study whether the accounting-auditing gap changes even when the formal privacy budget is the same. Separately, our theoretical analysis formalizes two distinct inferential steps. The one-run calibration of Steinke et al.~\cite{steinke2023privacy} yields a lower bound on $(\eps,\delta)$-privacy by testing a claimed DP null. The RDP/zCDP extension then starts from a certified lower bound on binary distinguishing advantage and asks what divergence cost is unavoidable.
+
+In summary, the report is organized around a single empirical comparison and a single theoretical extension. Empirically, we compare accounting upper bounds and one-run audit lower bounds for a black-box DP-SGD workload on CIFAR-10. Theoretically, we show how certified binary-advantage evidence can be converted exactly into lower bounds for RDP and zCDP, while making clear that this conversion is separate from the direct one-run calibration used in the experiments.
+
+\section{One-Run Audit Calibration and Theory}
+
+This section has two distinct goals. First, we recall what the one-run audit of Steinke et al.~\cite{steinke2023privacy} certifies directly: a statistically valid lower bound on privacy loss in the usual $(\eps,\del)$ sense. Second, we give a separate advantage-based conversion showing that \emph{whenever} an audit certifies a lower bound on the advantage of a binary distinguisher between neighboring datasets, that evidence can also be translated into lower bounds against divergence-based notions such as RDP and zCDP.
+
+The main point is that these are two different inferential steps. The one-run theorem is a hypothesis test for $(\eps,\del)$-DP based on the number of correct guesses in a single run. By contrast, the RDP/zCDP extension starts from a certified lower bound on the advantage of a genuine binary post-processing attack and then asks what divergence cost is unavoidable.
+
+\subsection{What the one-run audit gives directly}
+
+We adopt the one-run auditing framework of Steinke et al.~\cite{steinke2023privacy}. The auditor inserts many independently randomized canaries into a single execution of the training algorithm and then attempts to infer, for each canary, whether it was included in the training data. Let $r$ denote the number of non-abstained guesses and $v$ the number of correct guesses among those $r$ guesses.
+
+A central result of \cite{steinke2023privacy} is that, under the null hypothesis that the mechanism satisfies $(\eps,\del)$-DP, the number of correct guesses admits a valid upper-tail comparison to a binomial benchmark with success parameter
+\[
+p(\eps)=\frac{e^\eps}{1+e^\eps},
+\]
+up to the explicit additive $\del$-dependent term in their theorem. In particular, the observed pair $(v,r)$ yields a level-$(1-\beta)$ hypothesis test for the claim that the mechanism is $(\eps,\del)$-DP. Inverting this test gives the usual one-run auditing lower bound
+\[
+\eps_{\mathrm{audit}}(\del,\beta).
+\]
+
+This is the quantity that we compare empirically with the privacy accountant. Importantly, the one-run result is a calibrated test of a claimed $(\eps,\del)$ guarantee. By itself, it should not be interpreted as a general confidence interval for the unconditional success probability of the auditor; the stochastic calibration in \cite{steinke2023privacy} is tailored to the DP null hypothesis rather than to an i.i.d.\ model for repeated guesses.
+
+\subsection{Binary advantage as a separate input}
+
+To connect auditing evidence to RDP and zCDP, it is convenient to work with the advantage of a binary post-processing attack. Let $A$ be any binary test with output in $\{0,1\}$ applied to the released model. For neighboring datasets $D \simeq D'$, write
+\[
+p := \Pr[A(M(D))=1],
+\qquad
+q := \Pr[A(M(D'))=1].
+\]
+After orienting the labels so that $p \ge q$, the success probability of this test under equal priors is
+\[
+s=\frac{1}{2}\bigl(p+(1-q)\bigr)=\frac{1}{2}+\frac{p-q}{2},
+\]
+and its advantage over random guessing is therefore
+\[
+a:=2s-1=p-q.
+\]
+Equivalently, the induced pair of output laws is the Bernoulli pair $\Bern(p),\Bern(q)$ with
+\[
+|p-q|=a.
+\]
+
+This reduction is the right bridge to divergence-based privacy notions. By post-processing, any valid privacy guarantee for the full mechanism must also hold for the induced Bernoulli pair. Therefore, once one has a certified lower bound
+\[
+a \ge a_{\mathrm{LCB}}
+\]
+for the advantage of some binary post-processing attack, one can ask for the smallest RDP or zCDP parameter compatible with that much distinguishability.
+
+Two remarks are worth making. First, if the auditor always outputs a binary guess and never abstains, then its success probability is already the success probability of a genuine binary test. Second, if the auditor allows abstentions, one can convert it into a binary test by filling in abstentions with fair coin flips; the resulting binary advantage is the guess rate times the conditional advantage among non-abstentions. We do not claim that the one-run theorem of \cite{steinke2023privacy} by itself certifies this advantage quantity. Rather, the theorem below applies whenever such an advantage lower bound is available from the audit design together with a valid statistical calibration.
+
+\subsection{Extension to RDP and zCDP}
+
+We now turn to divergence-based privacy notions commonly used in analyses of DP-SGD. The question is:
+\begin{quote}
+If there exists a binary post-processing attack with certified advantage at least $a$, what is the smallest RDP or zCDP parameter that could still be consistent with that fact?
+\end{quote}
+
+Because the attack induces a Bernoulli pair with separation $|p-q| \ge a$, this becomes an extremal problem over binary distributions: minimize the relevant divergence subject to a fixed amount of binary distinguishability. The next theorem gives the exact answer for order-$\alpha$ RDP.
+
+\begin{theorem}[Exact RDP lower bound from binary advantage]
+\label{thm:rdp}
+Fix $\alpha>1$. Suppose there exist neighboring datasets and a binary post-processing attack with true advantage at least $a\in(0,1)$. Then any claimed $(\alpha,\epsbar_\alpha)$-RDP guarantee must satisfy
+\[
+\epsbar_\alpha \ge \mathcal E_\alpha(a),
+\]
+where
+\[
+\mathcal E_\alpha(a):=
+\frac{1}{\alpha-1}
+\log\!\left(
+\frac{\cosh((2\alpha-1)t)}{\cosh t}
+\right),
+\qquad
+t=\operatorname{artanh}(a).
+\]
+\end{theorem}
+
+The proof, given in Appendix~\ref{app:theory}, shows that among all Bernoulli pairs with advantage at least $a$, the extremal configuration is the symmetric pair
+\[
+\left(\frac{1+a}{2},\frac{1-a}{2}\right).
+\]
+Thus Theorem~\ref{thm:rdp} is exact: it gives the smallest order-$\alpha$ RDP cost compatible with binary advantage level $a$.
+
+Consequently, whenever an audit certifies a lower bound $a_{\mathrm{LCB}}$ on the advantage of some binary post-processing attack, the same confidence statement immediately implies
+\[
+\epsbar_\alpha \ge \mathcal E_\alpha(a_{\mathrm{LCB}})
+\]
+for every claimed order-$\alpha$ RDP guarantee.
+
+We can then pass from RDP to zCDP. Since a $\rho$-zCDP mechanism is $(\alpha,\alpha\rho)$-RDP for every $\alpha>1$, the previous theorem yields a corresponding lower bound on $\rho$.
+
+\begin{corollary}[Exact zCDP lower bound from binary advantage]
+\label{cor:zcdp}
+If an audit certifies a binary advantage lower bound $a_{\mathrm{LCB}}\in(0,1)$ with confidence $1-\beta$, and the mechanism is claimed to be $\rho$-zCDP, then with confidence $1-\beta$ the true parameter must satisfy
+\[
+\rho \ge a_{\mathrm{LCB}}\log\!\left(\frac{1+a_{\mathrm{LCB}}}{1-a_{\mathrm{LCB}}}\right).
+\]
+\end{corollary}
+
+In summary, our theory has two layers. The one-run audit of \cite{steinke2023privacy} yields a calibrated lower bound on $(\eps,\del)$-privacy by testing a claimed DP null. Separately, any certified lower bound on binary distinguishing advantage can be converted exactly into lower bounds for the RDP and zCDP formalisms that are widely used to analyze DP-SGD. In the experiments below, we use only the direct one-run calibration to report $\eps_{\mathrm{audit}}(\del,\beta)$; the RDP/zCDP conversion is a separate theoretical extension. Proofs of the exact conversion formulas are deferred to Appendix~\ref{app:theory}.
+
+\section{Experimental Setup and Findings}
+
+\subsection{Setup}
+
+We implement the one-run canary audit of Steinke et al.~\cite{steinke2023privacy} on CIFAR-10 in the black-box final-model setting. Following their Section~6.2, we set $m = n = 1000$: every training example is a canary, included independently with probability $1/2$, with no base data. Each label is replaced with a uniformly random incorrect label. The auditor scores canary $i$ as
+$\mathrm{score}_i = \mathrm{loss}(w_0, x_i, \tilde y_i) - \mathrm{loss}(w_T, x_i, \tilde y_i)$,
+where $w_0$ and $w_T$ are the initial and final parameters; a high score suggests the canary was included.
+
+Training uses full-batch DP-SGD ($B = 500$ on the ${\sim}500$ included canaries, so $q \approx 1$), $\sigma = 3.0$, clipping norm $C = 1$, and $\del = 10^{-5}$, with the PLD accountant from Google's \texttt{dp-accounting} library. The composed privacy cost reaches $\eps_{\mathrm{PLD}} \approx 8$ after 25 epochs. We hold the privacy-accounting parameters fixed, vary the model, and use an architecture-specific learning rate:
+\begin{itemize}[nosep]
+\item \textbf{Logistic Regression} (LogReg): 31K parameters, learning rate $0.5$.
+\item \textbf{MLP} (one hidden layer, 128 units): 395K parameters, learning rate $1.0$.
+\item \textbf{WRN-16-4}: 2.75M parameters, learning rate $2.0$.
+\end{itemize}
+Since the privacy guarantee depends only on $\sigma$, $C$, $B$, $n$, and the step count, all three models consume the same $\eps$ budget. Architecture and learning rate affect optimization and memorization, but not this accounting result.
+
+\subsection{Results: Model Capacity as the Bottleneck}
+
+The DP-SGD noise added per parameter per step is $\sigma C / B$, constant across architectures, but the gradient signal per parameter scales as $C/\sqrt{d}$, giving a per-coordinate signal-to-noise ratio of $\mathrm{SNR} \approx B / (\sigma \sqrt{d})$. At $\sigma = 3.0$ and $B = 500$ this works out to $\mathrm{SNR} \approx 0.95$ for LogReg, $\approx 0.27$ for MLP, and $\approx 0.10$ for WRN (Figure~\ref{fig:snr}). The effect on learning is visible in Figure~\ref{fig:train-loss}: LogReg and MLP reduce their training loss from ${\approx}\,2.3$ (random chance) to ${\approx}\,2.0$ over 25 epochs, while the WRN oscillates around $\ln 10 \approx 2.30$ and never descends. A model that does not learn does not memorize, and without memorization the membership inference attack has no signal.
+
+Figure~\ref{fig:audit-vs-account} confirms this. LogReg and MLP produce nonzero $\eps_{\mathrm{audit}}$ from epoch~1, reaching $0.56$ and $0.64$ respectively at $\eps_{\mathrm{PLD}} = 8.0$ (tightness ratio ${\approx}\,7$--$8\%$). Every completed WRN audit checkpoint returns $\eps_{\mathrm{audit}} = 0$.
+
+\begin{figure}[ht]
+\centering
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig4_snr_by_model.pdf}
+  \captionof{figure}{Heuristic per-coordinate SNR $= B/(\sigma\sqrt{d})$ by model size for the architectures considered.}
+  \label{fig:snr}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig2_training_loss_by_model.pdf}
+  \captionof{figure}{Training loss ($\sigma = 3.0$). Dotted line: $\ln 10$ (random). LogReg and MLP learn; the WRN does not.}
+  \label{fig:train-loss}
+\end{minipage}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig1_audit_vs_account_by_model.pdf}
+  \captionof{figure}{$\eps_{\mathrm{audit}}$ vs.\ $\eps_{\mathrm{account}}$ (PLD) for three architectures under identical accounting parameters. Dashed: perfect tightness.}
+  \label{fig:audit-vs-account}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig3_wrn_long_run_trajectory.pdf}
+  \captionof{figure}{WRN-16-4, $\sigma = 1.0$, 1000 epochs. Red/left: $\eps_{\mathrm{account}}$ (linear). Blue/right: $\eps_{\mathrm{audit}}$ (appears after ${\sim}100$ epochs, reaches $2.23$ at $\eps = 634$). Dotted: $\eps = 8$.}
+  \label{fig:wrn-long}
+\end{minipage}
+\end{figure}
+
+\subsection{Extended Training: The WRN Eventually Memorizes}
+
+The WRN is not inherently unauditable; it simply exhausts the privacy budget before learning anything. Training the same WRN with $\sigma = 1.0$ for 1000 epochs (Figure~\ref{fig:wrn-long}) lets the loss drop from $2.36$ to $0.30$. The first positive recorded audit lower bound is $0.04$ at epoch~50, it reaches $0.15$ at epoch~100, and it reaches $2.23$ by epoch~1000. At that point $\eps_{\mathrm{PLD}} = 634$ (tightness $0.4\%$); the $\eps = 8$ budget is exceeded at epoch~3.
+
+With $q \approx 1$ the accountant's bound grows linearly per step, while memorization grows sublinearly: the model needs hundreds of noisy updates before any single training example leaves a detectable trace. By the time signal exceeds noise, $\eps$ is far past any useful level.
+
+
+\section{Discussion and Future Work}
+
+Our results leave several open problems that are more precise than the generic question of whether ``accounting is too pessimistic.'' The first open problem is to disentangle conservative accounting from limited attack power in the black-box final-model setting. A small empirical lower bound can arise because the true leakage is small, because the audit is statistically weak, or because the final-model interface hides information that a stronger adversary could exploit. Resolving this ambiguity would require stronger black-box auditors, sharper score functions, and calibrations that make more efficient use of limited empirical data.
+
+A second open problem is to characterize how much of the observed gap is due to the access model itself. Our experiments only study final released models, while prior work shows that much tighter audits are possible when intermediate updates or hidden training states are available. To understand the role of the interface, one would need matched experiments that hold the DP-SGD mechanism fixed and vary only the adversary's access, ideally comparing black-box, white-box, and update-level auditors on the same workloads.
+
+A third open problem is to determine how robust our model-capacity and SNR story is beyond the narrow setting considered here. In this report, the pattern is clear for the CIFAR-10 canary construction and the specific DP-SGD choices we study, but it remains unclear how broadly it generalizes across datasets, architectures, clipping norms, and subsampling regimes. Answering that question would require a wider experimental grid, multiple random seeds, and enough repeated runs to distinguish stable trends from single-run effects.
+
+A fourth open problem is to integrate the divergence-based theory more directly with empirically practical auditors. Our RDP/zCDP conversion is exact once a certified binary-advantage lower bound is available, but the challenge is to obtain such certified advantage bounds efficiently in realistic auditing protocols, especially when abstentions and canary interference are present. Progress here would likely require combining the one-run perspective with new calibration techniques that certify binary advantage itself rather than only rejecting a claimed $(\eps,\del)$ null.
+
+Taken together, these open problems suggest that privacy auditing should be viewed as a complementary empirical lens rather than as a replacement for privacy accounting. The most useful next step is not simply to ask whether the accountant or the audit is ``right,'' but to understand which parts of the gap come from worst-case analysis, which come from finite-sample statistical limitations, and which come from the chosen adversarial interface.
+
+\appendix
+
+\section{Proofs for the Advantage-to-RDP/zCDP Conversion}
+\label{app:theory}
+
+\subsection{What the one-run theorem certifies}
+
+In the single-run framework of Steinke et al.~\cite{steinke2023privacy}, the auditor produces guesses
+\[
+T \in \{-1,0,1\}^m
+\]
+for hidden inclusion bits
+\[
+S \in \{-1,1\}^m.
+\]
+Here $T_i=0$ denotes abstention. Let
+\[
+r := \#\{i : T_i \neq 0\}
+\]
+be the number of non-abstained guesses, and let
+\[
+W:=\sum_{i=1}^m \max\{0,T_iS_i\}
+\]
+be the number of correct guesses among those $r$ guesses.
+
+Theorem~3.1 of \cite{steinke2023privacy} states that if the audited mechanism is $(\eps,\del)$-DP, then the upper tail of $W$ is controlled by the upper tail of
+\[
+\widetilde W \sim \Bin\!\left(r,\frac{e^\eps}{1+e^\eps}\right)
+\]
+plus the explicit additive $\del$-dependent term from their theorem. Inverting this hypothesis test yields a valid lower confidence bound on the privacy parameter $\eps$ for a fixed $\del$.
+
+This is the sense in which the one-run method calibrates $\eps_{\mathrm{audit}}(\del,\beta)$. The result is a null-hypothesis test for $(\eps,\del)$-DP; it is not, by itself, a general confidence interval for the unconditional success probability or unconditional advantage of the auditor.
+
+\subsection{From binary advantage to the exact all-order RDP profile}
+
+The RDP/zCDP conversion proved below is therefore stated conditionally on a certified lower bound for the advantage of a genuine binary post-processing attack. This lower bound may come from a non-abstaining audit, from repeated-run estimation, or from any other valid statistical procedure.
+
+\begin{theorem}[Exact order-$\alpha$ RDP conversion from true advantage]
+\label{thm:appendix-rdp}
+Fix $\alpha>1$. If there exist neighboring datasets and a binary post-processing attack with true advantage at least $a$, then any $(\alpha,\epsbar_\alpha)$-RDP guarantee must satisfy
+\[
+\epsbar_\alpha \ge \mathcal E_\alpha(a),
+\]
+where
+\[
+\mathcal E_\alpha(a)
+:=
+\frac{1}{\alpha-1}
+\log\!\left(
+\frac{\cosh((2\alpha-1)t)}{\cosh t}
+\right),
+\qquad
+t=\operatorname{artanh}(a).
+\]
+The unique minimizer yielding this bound is the symmetric Bernoulli pair
+\[
+p^*=\frac{1+a}{2},
+\qquad
+q^*=\frac{1-a}{2}.
+\]
+\end{theorem}
+
+\begin{proof}
+By post-processing through the binary attack, any mechanism satisfying $(\alpha,\epsbar_\alpha)$-RDP must satisfy
+\[
+D_\alpha(\Bern(p)\|\Bern(q))\le \epsbar_\alpha
+\qquad\text{and}\qquad
+D_\alpha(\Bern(q)\|\Bern(p))\le \epsbar_\alpha,
+\]
+where $|p-q|\ge a$.
+Hence it suffices to solve
+\[
+\inf_{\substack{p,q\in[0,1]\\ |p-q|\ge a}}
+\max\!\Big\{
+D_\alpha(\Bern(p)\|\Bern(q)),
+D_\alpha(\Bern(q)\|\Bern(p))
+\Big\}.
+\]
+
+We first show that the infimum is attained on the boundary $|p-q|=a$. Suppose a pair has separation
+\[
+|p-q|=a'>a.
+\]
+Let $\lambda:=a/a'\in(0,1)$ and pass both Bernoulli laws through the same binary symmetric channel that keeps a bit unchanged with probability $(1+\lambda)/2$ and flips it with probability $(1-\lambda)/2$. The resulting Bernoulli parameters are
+\[
+p'=\lambda p+\frac{1-\lambda}{2},
+\qquad
+q'=\lambda q+\frac{1-\lambda}{2},
+\]
+so that $|p'-q'|=\lambda |p-q|=a$. By data processing for R\'enyi divergence,
+\[
+D_\alpha(\Bern(p)\|\Bern(q))\ge D_\alpha(\Bern(p')\|\Bern(q'))
+\]
+and similarly in the reverse direction. Hence no pair with separation strictly larger than $a$ can do better than some pair with separation exactly $a$.
+
+It therefore suffices to solve the boundary problem $|p-q|=a$. Assume without loss of generality that $p\ge q$, and write
+\[
+p=u+a,
+\qquad
+q=u,
+\qquad
+u\in[0,1-a].
+\]
+Let
+\[
+F_\alpha(u)
+:=
+\exp\!\big((\alpha-1)D_\alpha(\Bern(u+a)\|\Bern(u))\big)
+=
+(u+a)^\alpha u^{1-\alpha}
++
+(1-u-a)^\alpha(1-u)^{1-\alpha}.
+\]
+The extremal problem is equivalent to minimizing
+\[
+G(u):=\max\{F_\alpha(u),F_\alpha(1-a-u)\}.
+\]
+
+We claim that $F_\alpha$ is strictly convex on $(0,1-a)$. Writing $F_\alpha(u)=A_\alpha(u)+B_\alpha(u)$ with
+\[
+A_\alpha(u)=(u+a)^\alpha u^{1-\alpha},
+\qquad
+B_\alpha(u)=(1-u-a)^\alpha(1-u)^{1-\alpha},
+\]
+direct calculation gives
+\[
+A_\alpha''(u)
+=
+\alpha(\alpha-1)a^2 (u+a)^{\alpha-2}u^{-\alpha-1}
+>0.
+\]
+By symmetry, $B_\alpha''(u)>0$ as well. Thus $F_\alpha$ is strictly convex.
+
+As the maximum of convex functions, $G(u)$ is convex, and by definition it is symmetric around
+\[
+u^*=\frac{1-a}{2}.
+\]
+For any $u\neq u^*$, strict convexity of $F_\alpha$ implies
+\[
+\frac{1}{2}F_\alpha(u)+\frac{1}{2}F_\alpha(1-a-u)>F_\alpha(u^*).
+\]
+Since the maximum of two values is at least their average,
+\[
+G(u)\ge
+\frac{1}{2}\big(F_\alpha(u)+F_\alpha(1-a-u)\big)
+>
+F_\alpha(u^*)
+=
+G(u^*).
+\]
+Therefore, $G(u)$ attains its unique global minimum exactly at
+\[
+u^*=\frac{1-a}{2},
+\]
+which corresponds to
+\[
+p^*=\frac{1+a}{2},
+\qquad
+q^*=\frac{1-a}{2}.
+\]
+
+To evaluate the divergence at $(p^*,q^*)$, substitute
+\[
+p^*=\frac{e^t}{2\cosh t},
+\qquad
+q^*=\frac{e^{-t}}{2\cosh t}.
+\]
+Since $1-p^*=q^*$ and $1-q^*=p^*$, we have
+\begin{align*}
+\exp\!\big((\alpha-1)\mathcal E_\alpha(a)\big)
+&=
+(p^*)^\alpha(q^*)^{1-\alpha}
++
+(q^*)^\alpha(p^*)^{1-\alpha} \\
+&=
+\frac{e^{(2\alpha-1)t}+e^{-(2\alpha-1)t}}{2\cosh t}
+=
+\frac{\cosh((2\alpha-1)t)}{\cosh t}.
+\end{align*}
+Taking logarithms and dividing by $\alpha-1$ proves the formula.
+\end{proof}
+
+\begin{lemma}[Monotonicity of the normalized profile]
+\label{lem:normalized-monotone}
+For each fixed $a\in(0,1)$, the function
+\[
+\alpha \longmapsto \frac{\mathcal E_\alpha(a)}{\alpha}
+\]
+is strictly decreasing on $(1,\infty)$.
+\end{lemma}
+
+\begin{proof}
+Write
+\[
+(\alpha-1)\mathcal E_\alpha(a)=\phi(\beta t)-\phi(t),
+\qquad
+\phi(x):=\log\cosh x,
+\qquad
+\beta:=2\alpha-1>1.
+\]
+We wish to show that
+\[
+H(\beta):=\frac{\mathcal E_\alpha(a)}{\alpha}
+\]
+is strictly decreasing. Using $\alpha=\frac{\beta+1}{2}$ and $\alpha-1=\frac{\beta-1}{2}$, we obtain
+\[
+H(\beta)=\frac{4(\phi(\beta t)-\phi(t))}{\beta^2-1}.
+\]
+Using $\phi'(x)=\tanh x$, we may write
+\[
+H(\beta)=\frac{4}{\beta^2-1}\int_1^\beta f(s)\,ds,
+\qquad
+f(s):=t\tanh(st).
+\]
+
+Differentiating yields
+\[
+H'(\beta)
+=
+\frac{4}{(\beta^2-1)^2}
+\left(
+(\beta^2-1)f(\beta)-2\beta\int_1^\beta f(s)\,ds
+\right).
+\]
+Because $x\mapsto \frac{\tanh(x)}{x}$ is strictly decreasing on $(0,\infty)$, the function $\frac{f(s)}{s}$ is strictly decreasing. Hence
+\[
+f(s)>\frac{s}{\beta}f(\beta)
+\qquad\text{for }s\in[1,\beta).
+\]
+Integrating this strict inequality yields
+\[
+\int_1^\beta f(s)\,ds
+>
+\frac{\beta^2-1}{2\beta}f(\beta).
+\]
+Substituting back implies $H'(\beta)<0$, establishing strict monotonicity.
+\end{proof}
+
+\subsection{Exact zCDP lower bound}
+
+\begin{corollary}[Exact zCDP conversion from binary advantage]
+\label{cor:appendix-zcdp}
+If an audit certifies a true binary advantage lower bound $a_{\mathrm{LCB}}\in(0,1)$ with confidence $1-\beta$, and the mechanism is claimed to be $\rho$-zCDP, then with confidence $1-\beta$ the true privacy parameter must satisfy
+\[
+\rho \ge a_{\mathrm{LCB}}\log\!\left(\frac{1+a_{\mathrm{LCB}}}{1-a_{\mathrm{LCB}}}\right).
+\]
+\end{corollary}
+
+\begin{proof}
+A $\rho$-zCDP mechanism is $(\alpha,\alpha\rho)$-RDP for all $\alpha>1$. Assuming the true advantage is at least $a_{\mathrm{LCB}}$, Theorem~\ref{thm:appendix-rdp} implies
+\[
+\alpha\rho \ge \mathcal E_\alpha(a_{\mathrm{LCB}}),
+\]
+meaning
+\[
+\rho \ge \sup_{\alpha>1}\frac{\mathcal E_\alpha(a_{\mathrm{LCB}})}{\alpha}.
+\]
+By Lemma~\ref{lem:normalized-monotone}, this supremum is attained as $\alpha\downarrow1$. Taking the limit yields the binary KL divergence:
+\[
+\lim_{\alpha\downarrow1}\frac{\mathcal E_\alpha(a_{\mathrm{LCB}})}{\alpha}
+=
+\KL\!\left(
+\Bern\!\left(\frac{1+a_{\mathrm{LCB}}}{2}\right)
+\middle\|
+\Bern\!\left(\frac{1-a_{\mathrm{LCB}}}{2}\right)
+\right)
+=
+a_{\mathrm{LCB}}\log\!\left(\frac{1+a_{\mathrm{LCB}}}{1-a_{\mathrm{LCB}}}\right).
+\]
+\end{proof}
+
+\begin{thebibliography}{99}
+
+\bibitem{abadi2016deep}
+Martin Abadi, Andy Chu, Ian Goodfellow, H.~Brendan McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang.
+\newblock Deep Learning with Differential Privacy.
+\newblock In \emph{Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications Security (CCS)}, pages 308--318, 2016.
+
+\bibitem{mironov2017renyi}
+Ilya Mironov.
+\newblock R\'enyi Differential Privacy.
+\newblock In \emph{2017 IEEE 30th Computer Security Foundations Symposium (CSF)}, pages 263--275, 2017.
+
+\bibitem{wang2019subsampled}
+Yu-Xiang Wang, Borja Balle, and Shiva Prasad Kasiviswanathan.
+\newblock Subsampled R\'enyi Differential Privacy and Analytical Moments Accountant.
+\newblock In \emph{Proceedings of the Twenty-Second International Conference on Artificial Intelligence and Statistics (AISTATS)}, volume 89 of \emph{Proceedings of Machine Learning Research}, pages 1226--1235, 2019.
+
+\bibitem{bun2016concentrated}
+Mark Bun and Thomas Steinke.
+\newblock Concentrated Differential Privacy: Simplifications, Extensions, and Lower Bounds.
+\newblock In \emph{Theory of Cryptography Conference (TCC)}, pages 635--658, 2016.
+
+\bibitem{koskela2021tight}
+Antti Koskela, Joonas J\"alk\"o, Lukas Prediger, and Antti Honkela.
+\newblock Tight Differential Privacy for Discrete-Valued Mechanisms and for the Subsampled Gaussian Mechanism Using FFT.
+\newblock In \emph{Proceedings of the Twenty-Fourth International Conference on Artificial Intelligence and Statistics (AISTATS)}, volume 130 of \emph{Proceedings of Machine Learning Research}, pages 3358--3366, 2021.
+
+\bibitem{shokri2017membership}
+Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly Shmatikov.
+\newblock Membership Inference Attacks Against Machine Learning Models.
+\newblock In \emph{2017 IEEE Symposium on Security and Privacy (SP)}, pages 3--18, 2017.
+
+\bibitem{jagielski2020auditing}
+Matthew Jagielski, Jonathan Ullman, and Alina Oprea.
+\newblock Auditing Differentially Private Machine Learning: How Private Is Private SGD?
+\newblock In \emph{Advances in Neural Information Processing Systems}, volume 33, pages 22205--22216, 2020.
+
+\bibitem{tramer2022debugging}
+Florian Tram\`er, Andreas Terzis, Thomas Steinke, Shuang Song, Matthew Jagielski, and Nicholas Carlini.
+\newblock Debugging Differential Privacy: A Case Study for Privacy Auditing.
+\newblock \emph{arXiv preprint arXiv:2202.12219}, 2022.
+
+\bibitem{lu2022general}
+Fred Lu, Joseph Munoz, Maya Fuchs, Tyler LeBlond, Elliott Zaresky-Williams, Edward Raff, Francis Ferraro, and Brian Testa.
+\newblock A General Framework for Auditing Differentially Private Machine Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems}, volume 35, pages 4165--4177, 2022.
+
+\bibitem{zanella2023bayesian}
+Santiago Zanella-B\'eguelin, Lukas Wutschitz, Shruti Tople, Ahmed Salem, Victor R\"uhle, Andrew Paverd, Mohammad Naseri, Boris K\"opf, and Daniel Jones.
+\newblock Bayesian Estimation of Differential Privacy.
+\newblock In \emph{Proceedings of the 40th International Conference on Machine Learning (ICML)}, volume 202 of \emph{Proceedings of Machine Learning Research}, pages 40624--40636, 2023.
+
+\bibitem{nasr2023tight}
+Milad Nasr, Jamie Hayes, Thomas Steinke, Borja Balle, Florian Tram\`er, Matthew Jagielski, Nicholas Carlini, and Andreas Terzis.
+\newblock Tight Auditing of Differentially Private Machine Learning.
+\newblock In \emph{32nd USENIX Security Symposium (USENIX Security 23)}, pages 1633--1650, 2023.
+
+\bibitem{steinke2023privacy}
+Thomas Steinke, Milad Nasr, and Matthew Jagielski.
+\newblock Privacy Auditing with One (1) Training Run.
+\newblock In \emph{Advances in Neural Information Processing Systems}, volume 36, pages 49268--49280, 2023.
+
+\bibitem{dong2022gaussian}
+Jinshuo Dong, Aaron Roth, and Weijie J.~Su.
+\newblock Gaussian Differential Privacy.
+\newblock \emph{Journal of the Royal Statistical Society: Series B}, 84(1):3--37, 2022.
+
+\bibitem{annamalai2024nearlytight}
+Meenatchi Sundaram Muthu Selva Annamalai and Emiliano De Cristofaro.
+\newblock Nearly Tight Black-Box Auditing of Differentially Private Machine Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems}, volume 37, 2024.
+
+\end{thebibliography}
+
+\end{document}
